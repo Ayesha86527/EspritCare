@@ -12,9 +12,16 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QMessageBox>
+#include <QDate>
 
-AddPatientWindow::AddPatientWindow(QWidget *parent)
+/*AddPatientWindow::AddPatientWindow(QWidget *parent)
     : QMainWindow(parent)
+{
+    setupUi();
+}*/
+
+AddPatientWindow::AddPatientWindow(Backend* backendPtr, QWidget *parent)
+    : QMainWindow(parent), backend(backendPtr)  // assign pointer
 {
     setupUi();
 }
@@ -232,47 +239,65 @@ void AddPatientWindow::setupUi()
 
 void AddPatientWindow::onAddPatientClicked()
 {
-    // Retrieve input values
     QString name = nameEdit->text().trimmed();
     QString gender = genderCombo->currentText();
     int age = ageSpin->value();
     QDate visitDate = visitDateEdit->date();
     QString notes = notesEdit->toPlainText().trimmed();
 
-    // Validate name
+    // Validation
     if (name.isEmpty()) {
         QMessageBox::warning(this, "Validation Error", "Please enter the patient's name.");
         nameEdit->setFocus();
         return;
     }
 
-    // Validate gender
     if (gender == "Select") {
         QMessageBox::warning(this, "Validation Error", "Please select a gender.");
         genderCombo->setFocus();
         return;
     }
 
+    // Calculate approximate birth year from age
+    int currentYear = QDate::currentDate().year();
+    int birthYear = currentYear - age;
+    QString birthDateStr = QString("%1-01-01").arg(birthYear);  // Approximate birth date
+
+    // Add patient to backend
+    Patient newPatient = backend->addPatient(
+        name.toStdString(),
+        gender.toStdString(),
+        birthDateStr.toStdString()
+        );
+
+    // If notes provided, create a session for this visit
+    if (!notes.isEmpty()) {
+        backend->addSession(newPatient.id, notes.toStdString());
+    }
+
+    // Add to recent visits queue
+    backend->addRecentVisit(newPatient.id, newPatient.name);
+
     // Success message
     QMessageBox::information(this, "Success",
-                             QString("Patient '%1' has been added successfully!").arg(name));
+                             QString("Patient '%1' added successfully!\nPatient ID: %2")
+                                 .arg(QString::fromStdString(newPatient.name))
+                                 .arg(newPatient.id));
 
-    // Clear form for next entry
+    // Clear form
     nameEdit->clear();
     genderCombo->setCurrentIndex(0);
     ageSpin->setValue(1);
     visitDateEdit->setDate(QDate::currentDate());
     notesEdit->clear();
-
-    // Focus back to name field
     nameEdit->setFocus();
-
 }
+
 
 void AddPatientWindow::onCancelClicked()
 {
-    // Return to dashboard
-    DashboardWindow *dashboard = new DashboardWindow();
+    DashboardWindow *dashboard = new DashboardWindow(backend, nullptr);
+    dashboard->setAttribute(Qt::WA_DeleteOnClose);
     dashboard->show();
     this->close();
 }
