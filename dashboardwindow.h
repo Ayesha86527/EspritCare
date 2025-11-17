@@ -1,19 +1,18 @@
 #pragma once
 #include <QMainWindow>
+#include "backend.h"
 
 class QLabel;
 class QPushButton;
 class QListWidget;
 class QTimer;
-class DSABackend;  // NEW
-class EspritDB;     // NEW
 
 class DashboardWindow : public QMainWindow
 {
     Q_OBJECT
 public:
-    explicit DashboardWindow(QWidget *parent = nullptr);
-    ~DashboardWindow();
+    explicit DashboardWindow(Backend* backend, QWidget* parent = nullptr);
+    void refreshDashboard();
 
 private slots:
     void updateDateTime();
@@ -21,18 +20,14 @@ private slots:
     void onAddSessionClicked();
     void onViewPatientsClicked();
     void onGoBackClicked();
-    void loadDashboardData();  // NEW - Load recently/frequently visited
-
 private:
     void setupUi();
-
     QLabel *greetingLabel;
     QLabel *dateTimeLabel;
     QTimer *timer;
-    QListWidget *recentList;      // NEW
-    QListWidget *frequentList;    // NEW
+    QListWidget *recentList;
+    QListWidget *frequentList;
+    Backend* backend;
 
-    // Backend integration
-    EspritDB *db;                 // NEW
-    DSABackend *backend;          // NEW
 };
+
