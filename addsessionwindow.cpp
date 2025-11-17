@@ -1,7 +1,6 @@
 #include "addsessionwindow.h"
 #include "dashboardwindow.h"
-#include "espritdb.h"
-
+#include "backend.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -9,38 +8,24 @@
 #include <QPushButton>
 #include <QLineEdit>
 #include <QTextEdit>
-#include <QListWidget>
 #include <QFileDialog>
 #include <QMessageBox>
-#include <QFileInfo>
+#include <QSpacerItem>
 
-AddSessionWindow::AddSessionWindow(QWidget *parent)
-    : QMainWindow(parent)
-    , selectedPatientId(-1)
+
+AddSessionWindow::AddSessionWindow(Backend* backendPtr, QWidget *parent)
+    : QMainWindow(parent), backend(backendPtr), currentPatientID(-1)  // Initialize here
 {
-    // Initialize database
-    db = new EspritDB(this);
-    if (!db->openDatabase("espritcare.db")) {
-        qDebug() << "Failed to open database!";
-    }
-    db->createTables();
-
-    // Initialize backend
-    backend = new DSABackend(db);
-
     setupUi();
 }
 
-AddSessionWindow::~AddSessionWindow()
-{
-    delete backend;
-}
 
 void AddSessionWindow::setupUi()
 {
     QWidget *central = new QWidget(this);
     setCentralWidget(central);
 
+    // Background (same as theme)
     central->setStyleSheet(R"(
         QWidget {
             background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
@@ -51,8 +36,9 @@ void AddSessionWindow::setupUi()
     QVBoxLayout *mainLayout = new QVBoxLayout(central);
     mainLayout->setAlignment(Qt::AlignCenter);
 
+    // --- Main Card Container ---
     QFrame *formCard = new QFrame;
-    formCard->setFixedWidth(600);
+    formCard->setFixedWidth(550);
     formCard->setStyleSheet(R"(
         QFrame {
             background-color: #ffffff;
@@ -65,6 +51,7 @@ void AddSessionWindow::setupUi()
     cardLayout->setContentsMargins(40, 45, 40, 45);
     cardLayout->setSpacing(18);
 
+    // --- Title ---
     QLabel *titleLabel = new QLabel("Add New Session");
     titleLabel->setStyleSheet(R"(
         font-size: 24px;
@@ -77,6 +64,8 @@ void AddSessionWindow::setupUi()
     titleLabel->setAlignment(Qt::AlignLeft);
     cardLayout->addWidget(titleLabel);
 
+
+    // --- Styles ---
     QString inputStyle = R"(
         QLineEdit, QTextEdit {
             padding: 10px 12px;
@@ -108,7 +97,7 @@ void AddSessionWindow::setupUi()
 
     QHBoxLayout *searchLayout = new QHBoxLayout;
     searchEdit = new QLineEdit;
-    searchEdit->setPlaceholderText("Enter patient name");
+    searchEdit->setPlaceholderText("Enter patient name or ID");
     searchEdit->setStyleSheet(inputStyle);
 
     searchBtn = new QPushButton("Search");
@@ -132,38 +121,16 @@ void AddSessionWindow::setupUi()
     searchLayout->addWidget(searchBtn);
     cardLayout->addLayout(searchLayout);
 
-    // --- Search Results List (NEW) ---
-    searchResultsList = new QListWidget;
-    searchResultsList->setMaximumHeight(120);
-    searchResultsList->setStyleSheet(R"(
-        QListWidget {
-            background: #f8fafc;
-            border: 1px solid #cfd9e6;
-            border-radius: 6px;
-            font-size: 10pt;
-            color: #1f2f45;
-        }
-        QListWidget::item {
-            padding: 6px;
-        }
-        QListWidget::item:selected {
-            background: #2b7de9;
-            color: white;
-        }
-    )");
-    searchResultsList->hide(); // Hidden until search
-    cardLayout->addWidget(searchResultsList);
-
     patientResultLabel = new QLabel("No patient selected.");
     patientResultLabel->setStyleSheet(R"(
-        QLabel {
-            color: #6b7c8c;
-            font-size: 10pt;
-            margin-top: 5px;
-            background: transparent;
-            border: none;
-        }
-    )");
+    QLabel {
+        color: #6b7c8c;
+        font-size: 10pt;
+        margin-top: 5px;
+        background: transparent;
+        border: none;
+    }
+)");
     cardLayout->addWidget(patientResultLabel);
 
     // --- Session Info ---
@@ -177,7 +144,7 @@ void AddSessionWindow::setupUi()
     cardLayout->addWidget(sessionNumberEdit);
 
     // --- Upload Recording ---
-    QLabel *uploadLabel = new QLabel("Upload Session Recording (Optional)");
+    QLabel *uploadLabel = new QLabel("Upload Session Recording");
     uploadLabel->setStyleSheet(labelStyle);
     QPushButton *uploadBtn = new QPushButton("Choose File");
     uploadBtn->setStyleSheet(R"(
@@ -197,24 +164,24 @@ void AddSessionWindow::setupUi()
 
     recordingFileLabel = new QLabel("No file selected.");
     recordingFileLabel->setStyleSheet(R"(
-        QLabel {
-            color: #6b7c8c;
-            font-size: 10pt;
-            margin-top: 4px;
-            background: transparent;
-            border: none;
-        }
-    )");
+    QLabel {
+        color: #6b7c8c;
+        font-size: 10pt;
+        margin-top: 4px;
+        background: transparent;
+        border: none;
+    }
+)");
 
     cardLayout->addWidget(uploadLabel);
     cardLayout->addWidget(uploadBtn);
     cardLayout->addWidget(recordingFileLabel);
 
     // --- Notes Section ---
-    QLabel *notesLabel = new QLabel("Session Notes");
+    QLabel *notesLabel = new QLabel("Session Notes (Optional)");
     notesLabel->setStyleSheet(labelStyle);
     notesEdit = new QTextEdit;
-    notesEdit->setPlaceholderText("Add session notes, diagnosis, treatment plan...");
+    notesEdit->setPlaceholderText("Add any details about this session...");
     notesEdit->setMaximumHeight(100);
     notesEdit->setStyleSheet(inputStyle);
     cardLayout->addWidget(notesLabel);
@@ -267,76 +234,66 @@ void AddSessionWindow::setupUi()
 
     // --- Connections ---
     connect(searchBtn, &QPushButton::clicked, this, &AddSessionWindow::onSearchPatientClicked);
-    connect(searchResultsList, &QListWidget::itemClicked, this, &AddSessionWindow::onPatientSelected);
     connect(uploadBtn, &QPushButton::clicked, this, &AddSessionWindow::onUploadRecordingClicked);
     connect(saveBtn, &QPushButton::clicked, this, &AddSessionWindow::onSaveSessionClicked);
     connect(cancelBtn, &QPushButton::clicked, this, &AddSessionWindow::onCancelClicked);
 
+    // Window properties
     setWindowTitle("EspritCare - Add Session");
     resize(1000, 600);
 }
 
-// ========== SEARCH PATIENT (DSA BACKEND) ==========
+// --- Slots ---
+
 void AddSessionWindow::onSearchPatientClicked()
 {
     QString searchText = searchEdit->text().trimmed();
 
     if (searchText.isEmpty()) {
-        QMessageBox::warning(this, "Search Error", "Please enter a patient name.");
+        QMessageBox::warning(this, "Search Error", "Please enter a patient name or ID.");
         return;
     }
 
-    // Use DSA backend to search
-    QVector<PatientData> results = backend->searchPatientByName(searchText);
+    // Search in backend (by ID or name)
+    Patient* found = backend->searchPatient(searchText.toStdString());
 
-    searchResultsList->clear();
+    if (found) {
+        currentPatientID = found->id;  // Store the patient ID
 
-    if (results.isEmpty()) {
-        searchResultsList->addItem("No patients found");
-        searchResultsList->show();
-        patientResultLabel->setText("No patient selected.");
-        selectedPatientId = -1;
+        // Display patient info
+        patientResultLabel->setText(
+            QString("✓ Patient Found: %1 (ID: %2)")
+                .arg(QString::fromStdString(found->name))
+                .arg(found->id)
+            );
+        patientResultLabel->setStyleSheet(R"(
+            QLabel {
+                color: #2b7de9;
+                font-size: 10pt;
+                font-weight: 500;
+                margin-top: 5px;
+                background: transparent;
+                border: none;
+            }
+        )");
+
+        // Show next session number (visit_count + 1)
+        sessionNumberEdit->setText(QString::number(found->visit_count + 1));
+
     } else {
-        searchResultsList->show();
-        for (const auto& patient : results) {
-            QString displayText = QString("%1 (ID: %2) - %3")
-            .arg(patient.name)
-                .arg(patient.id)
-                .arg(patient.gender);
-
-            QListWidgetItem* item = new QListWidgetItem(displayText);
-            item->setData(Qt::UserRole, patient.id); // Store patient ID in item
-            searchResultsList->addItem(item);
-        }
-    }
-}
-
-// ========== PATIENT SELECTED FROM LIST ==========
-void AddSessionWindow::onPatientSelected()
-{
-    QListWidgetItem* selectedItem = searchResultsList->currentItem();
-    if (!selectedItem) return;
-
-    selectedPatientId = selectedItem->data(Qt::UserRole).toInt();
-
-    if (selectedPatientId > 0) {
-        PatientData* patient = backend->searchPatientByID(selectedPatientId);
-
-        if (patient) {
-            patientResultLabel->setText(QString("✓ Selected: %1 (ID: %2)")
-                                            .arg(patient->name)
-                                            .arg(patient->id));
-
-            // Auto-calculate session number
-            sessionNumberEdit->setText(QString::number(patient->visitCount + 1));
-
-            // Mark as recently visited
-            backend->markPatientAsVisited(patient->id, patient->name);
-
-            delete patient; // Clean up
-        }
-
-        searchResultsList->hide();
+        currentPatientID = -1;
+        patientResultLabel->setText("✗ Patient not found. Please check the name or ID.");
+        patientResultLabel->setStyleSheet(R"(
+            QLabel {
+                color: #dc3545;
+                font-size: 10pt;
+                font-weight: 500;
+                margin-top: 5px;
+                background: transparent;
+                border: none;
+            }
+        )");
+        sessionNumberEdit->setText("—");
     }
 }
 
@@ -350,42 +307,44 @@ void AddSessionWindow::onUploadRecordingClicked()
     }
 }
 
-// ========== SAVE SESSION (DSA BACKEND + DB) ==========
 void AddSessionWindow::onSaveSessionClicked()
 {
-    if (selectedPatientId <= 0) {
+    // Validate patient is selected
+    if (currentPatientID == -1) {
         QMessageBox::warning(this, "Error", "Please search and select a patient first.");
         return;
     }
 
     QString notes = notesEdit->toPlainText().trimmed();
 
-    if (notes.isEmpty()) {
-        QMessageBox::warning(this, "Error", "Please add session notes.");
-        return;
+    // Create session in backend
+    Session newSession = backend->addSession(currentPatientID, notes.toStdString());
+
+    // Get patient for recent visits update
+    Patient* p = backend->getPatientByID(currentPatientID);
+    if (p) {
+        backend->addRecentVisit(p->id, p->name);
     }
 
-    // Use DSA backend to add session (saves to DB + Linked List)
-    if (backend->addSession(selectedPatientId, notes)) {
-        QMessageBox::information(this, "Success", "Session saved successfully!");
+    // Success message
+    QMessageBox::information(this, "Success",
+                             QString("Session #%1 saved successfully for Patient ID: %2")
+                                 .arg(newSession.session_id)
+                                 .arg(currentPatientID));
 
-        // Clear form
-        searchEdit->clear();
-        searchResultsList->clear();
-        searchResultsList->hide();
-        patientResultLabel->setText("No patient selected.");
-        sessionNumberEdit->setText("—");
-        notesEdit->clear();
-        recordingFileLabel->setText("No file selected.");
-        selectedPatientId = -1;
-    } else {
-        QMessageBox::critical(this, "Error", "Failed to save session!");
-    }
-}
-
-void AddSessionWindow::onCancelClicked()
-{
-    DashboardWindow *dashboard = new DashboardWindow();
+    // Return to dashboard with fresh data
+    DashboardWindow *dashboard = new DashboardWindow(backend, nullptr);
+    dashboard->setAttribute(Qt::WA_DeleteOnClose);
     dashboard->show();
     this->close();
 }
+
+
+void AddSessionWindow::onCancelClicked()
+{
+    DashboardWindow *dashboard = new DashboardWindow(backend, nullptr);
+    dashboard->setAttribute(Qt::WA_DeleteOnClose);
+    dashboard->show();
+    this->close();
+}
+
