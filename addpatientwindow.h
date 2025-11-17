@@ -1,5 +1,6 @@
 #pragma once
 #include <QMainWindow>
+#include "backend.h"
 
 class QLineEdit;
 class QComboBox;
@@ -12,7 +13,7 @@ class AddPatientWindow : public QMainWindow
 {
     Q_OBJECT
 public:
-    explicit AddPatientWindow(QWidget *parent = nullptr);
+    explicit AddPatientWindow(Backend* backend, QWidget *parent = nullptr);
 
 private slots:
     void onAddPatientClicked();
@@ -27,6 +28,8 @@ private:
     QSpinBox *ageSpin;
     QDateEdit *visitDateEdit;
     QTextEdit *notesEdit;
+    Backend* backend;
 };
+
 
 
