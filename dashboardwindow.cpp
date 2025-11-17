@@ -2,10 +2,7 @@
 #include "addsessionwindow.h"
 #include "addpatientwindow.h"
 #include "viewpatientwindow.h"
-#include "mainwindow.h"
-#include "DSABackend.h"     // NEW
-#include "espritdb.h"       // NEW
-
+#include "mainwindow.h"  // for going back to home
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -14,34 +11,70 @@
 #include <QDateTime>
 #include <QTimer>
 #include <QFrame>
+#include "backend.h"
 
-DashboardWindow::DashboardWindow(QWidget *parent)
-    : QMainWindow(parent)
+DashboardWindow::DashboardWindow(Backend* backendPtr, QWidget* parent)
+    : QMainWindow(parent), backend(backendPtr)
 {
-    // Initialize database
-    db = new EspritDB(this);
-    if (!db->openDatabase("espritcare.db")) {
-        qDebug() << "Failed to open database!";
-    }
-    db->createTables();
-
-    // Initialize backend with DSA structures
-    backend = new DSABackend(db);
-
     setupUi();
-    loadDashboardData();  // Load recently/frequently visited patients
+    refreshDashboard();  // Load data when dashboard opens
 }
 
-DashboardWindow::~DashboardWindow()
+// Refresh dashboard - populate recent and frequent patient lists
+void DashboardWindow::refreshDashboard()
 {
-    delete backend;
+    // Clear existing items
+    recentList->clear();
+    frequentList->clear();
+
+    // === RECENTLY VISITED PATIENTS ===
+    const std::vector<QueueNode>& recentVisits = backend->getRecentVisits();
+
+    if (recentVisits.empty()) {
+        recentList->addItem("No recent visits yet.");
+    } else {
+        // Display in reverse order (most recent first)
+        for (auto it = recentVisits.rbegin(); it != recentVisits.rend(); ++it) {
+            QString item = QString("ID %1 - %2")
+            .arg(it->patientID)
+                .arg(QString::fromStdString(it->patientName));
+            recentList->addItem(item);
+        }
+    }
+
+    // === FREQUENTLY VISITED PATIENTS ===
+    std::vector<Patient> frequentPatients = backend->getFrequentlyVisited();
+
+    if (frequentPatients.empty()) {
+        frequentList->addItem("No patients yet.");
+    } else {
+        // Show top 10 most frequent visitors
+        int count = 0;
+        for (const auto& p : frequentPatients) {
+            if (count >= 10) break;  // Limit to top 10
+            if (p.visit_count == 0) continue;  // Skip patients with no visits
+
+            QString item = QString("%1. %2 (%3 visits)")
+                               .arg(count + 1)
+                               .arg(QString::fromStdString(p.name))
+                               .arg(p.visit_count);
+            frequentList->addItem(item);
+            count++;
+        }
+
+        if (count == 0) {
+            frequentList->addItem("No frequent visitors yet.");
+        }
+    }
 }
 
 void DashboardWindow::setupUi()
 {
+    // Central widget for the entire window
     QWidget *central = new QWidget(this);
     setCentralWidget(central);
 
+    // Set a soft, smooth gradient background (same tone as Main Window)
     central->setStyleSheet(R"(
         QWidget {
             background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
@@ -81,6 +114,7 @@ void DashboardWindow::setupUi()
     menuTitle->setStyleSheet("color: white; font-weight: bold; font-size: 14pt;");
     sideLayout->addWidget(menuTitle);
 
+    // Sidebar buttons
     QPushButton *addPatientBtn = new QPushButton("➕ Add Patient");
     QPushButton *addSessionBtn = new QPushButton("🗒️  Add Session");
     QPushButton *viewPatientsBtn = new QPushButton("📋 View Patients");
@@ -99,27 +133,30 @@ void DashboardWindow::setupUi()
     mainLayout->setContentsMargins(30, 30, 30, 30);
     mainLayout->setSpacing(18);
 
+    // Greeting Title
     greetingLabel = new QLabel("Hey there, Welcome Back!");
     greetingLabel->setStyleSheet(R"(
         QLabel {
             font-size: 26px;
             font-weight: bold;
             color: #1f2f45;
-            background: transparent;
+            background: transparent;  /* makes it blend with gradient */
         }
     )");
     mainLayout->addWidget(greetingLabel, 0, Qt::AlignLeft);
 
+    // Date and Time label
     dateTimeLabel = new QLabel;
     dateTimeLabel->setStyleSheet(R"(
         QLabel {
             font-size: 11pt;
             color: #4a5e72;
-            background: transparent;
+            background: transparent;  /* blends perfectly */
         }
     )");
     mainLayout->addWidget(dateTimeLabel, 0, Qt::AlignLeft);
 
+    // Line separator
     QFrame *line = new QFrame;
     line->setFrameShape(QFrame::HLine);
     line->setFrameShadow(QFrame::Sunken);
@@ -144,16 +181,6 @@ void DashboardWindow::setupUi()
             background: #ffffff;
             border: 1px solid #cfd9e6;
             border-radius: 8px;
-            font-size: 10.5pt;
-            color: #1f2f45;
-            padding: 8px;
-        }
-        QListWidget::item {
-            padding: 8px;
-            border-bottom: 1px solid #e8ecef;
-        }
-        QListWidget::item:hover {
-            background: #f0f4f8;
         }
     )");
     recentLayout->addWidget(recentList);
@@ -173,16 +200,6 @@ void DashboardWindow::setupUi()
             background: #ffffff;
             border: 1px solid #cfd9e6;
             border-radius: 8px;
-            font-size: 10.5pt;
-            color: #1f2f45;
-            padding: 8px;
-        }
-        QListWidget::item {
-            padding: 8px;
-            border-bottom: 1px solid #e8ecef;
-        }
-        QListWidget::item:hover {
-            background: #f0f4f8;
         }
     )");
     freqLayout->addWidget(frequentList);
@@ -190,7 +207,7 @@ void DashboardWindow::setupUi()
 
     mainLayout->addLayout(patientLayout);
 
-    // Combine side panel and main area
+    // Combine side panel and main area into root layout
     QHBoxLayout *rootLayout = new QHBoxLayout(central);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->addWidget(sidePanel);
@@ -198,85 +215,64 @@ void DashboardWindow::setupUi()
 
     // ---------- Connections ----------
     connect(addPatientBtn, &QPushButton::clicked, this, &DashboardWindow::onAddPatientClicked);
+    QPushButton *addPatientButton = new QPushButton("Add Patient");
     connect(addSessionBtn, &QPushButton::clicked, this, &DashboardWindow::onAddSessionClicked);
     connect(viewPatientsBtn, &QPushButton::clicked, this, &DashboardWindow::onViewPatientsClicked);
     connect(goBackBtn, &QPushButton::clicked, this, &DashboardWindow::onGoBackClicked);
 
-    // Date & Time Auto Update
+    // ---------- Date & Time Auto Update ----------
     timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &DashboardWindow::updateDateTime);
     timer->start(1000);
     updateDateTime();
 
+    // Window Properties
     setWindowTitle("EspritCare Dashboard");
     resize(1000, 600);
 }
 
-// ========== NEW: LOAD DASHBOARD DATA USING DSA BACKEND ==========
-void DashboardWindow::loadDashboardData()
-{
-    // Load Recently Visited Patients (Queue - FIFO)
-    recentList->clear();
-    QVector<PatientData> recentPatients = backend->getRecentlyVisitedPatients();
 
-    if (recentPatients.isEmpty()) {
-        recentList->addItem("No recent visits yet");
-    } else {
-        for (const auto& patient : recentPatients) {
-            QString displayText = QString("%1 (ID: %2) - %3 visits")
-            .arg(patient.name)
-                .arg(patient.id)
-                .arg(patient.visitCount);
-            recentList->addItem(displayText);
-        }
-    }
-
-    // Load Frequently Visited Patients (Sorted by visit count)
-    frequentList->clear();
-    QVector<PatientData> frequentPatients = backend->getFrequentlyVisitedPatients(5);
-
-    if (frequentPatients.isEmpty()) {
-        frequentList->addItem("No patient data available");
-    } else {
-        for (const auto& patient : frequentPatients) {
-            QString displayText = QString("%1 - %2 visits")
-            .arg(patient.name)
-                .arg(patient.visitCount);
-            frequentList->addItem(displayText);
-        }
-    }
-}
-
+// Update date & time every second
 void DashboardWindow::updateDateTime()
 {
     QString dateTime = QDateTime::currentDateTime().toString("dddd, MMMM d, yyyy  |  hh:mm:ss ap");
     dateTimeLabel->setText(dateTime);
 }
 
+// Placeholder button actions
+
 void DashboardWindow::onAddPatientClicked()
 {
-    AddPatientWindow *addWindow = new AddPatientWindow();
+    AddPatientWindow *addWindow = new AddPatientWindow(backend, nullptr);  // No parent
+    addWindow->setAttribute(Qt::WA_DeleteOnClose);
     addWindow->show();
-    this->close();
+    this->hide();
 }
 
 void DashboardWindow::onAddSessionClicked()
 {
-    AddSessionWindow *addSession = new AddSessionWindow();
+    AddSessionWindow *addSession = new AddSessionWindow(backend, nullptr);  // No parent
+    addSession->setAttribute(Qt::WA_DeleteOnClose);
     addSession->show();
-    this->close();
+    this->hide();
 }
+
 
 void DashboardWindow::onViewPatientsClicked()
 {
-    auto *viewPatients = new ViewPatientWindow();
+    ViewPatientWindow *viewPatients = new ViewPatientWindow(backend, nullptr);  // No parent
+    viewPatients->setAttribute(Qt::WA_DeleteOnClose);
     viewPatients->show();
-    this->close();
+    this->hide();
 }
 
+
+// Go back to the welcome screen (MainWindow)
 void DashboardWindow::onGoBackClicked()
 {
-    MainWindow *mainWin = new MainWindow();
+    MainWindow *mainWin = new MainWindow(backend, nullptr);  // No parent
+    mainWin->setAttribute(Qt::WA_DeleteOnClose);
     mainWin->show();
     this->close();
 }
+
